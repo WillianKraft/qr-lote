@@ -21,7 +21,12 @@
 html,body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 var(--f-display)}
 body{padding-bottom:env(safe-area-inset-bottom,0px)}
 .cam{position:relative;background:#000;height:58vh;min-height:300px;overflow:hidden}
+.stage{position:absolute;inset:0;transform-origin:50% 50%;transition:transform .2s}
 .cam video,.cam canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.zoom{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.zoom span{font-size:13px;color:var(--muted);margin-right:2px}
+.zoom .btn{min-width:52px;justify-content:center;font-variant-numeric:tabular-nums}
+.hint{margin:0;font-size:13px;color:var(--muted)}
 .cam canvas{pointer-events:none}
 .flash{position:absolute;inset:0;box-shadow:inset 0 0 0 6px var(--accent);opacity:0;transition:opacity .25s;pointer-events:none}
 .flash.on{opacity:1;transition:none}
@@ -76,8 +81,10 @@ li{display:grid;grid-template-columns:44px 1fr;gap:8px;padding:10px 0;border-bot
 <body>
 
 <section class="cam" id="cam">
-  <video id="video" playsinline muted></video>
-  <canvas id="overlay"></canvas>
+  <div class="stage" id="stage">
+    <video id="video" playsinline muted></video>
+    <canvas id="overlay"></canvas>
+  </div>
   <div class="flash" id="flash"></div>
   <div class="hud">
     <div class="big" id="bigCount">0<small>QR codes únicos</small></div>
@@ -99,6 +106,14 @@ li{display:grid;grid-template-columns:44px 1fr;gap:8px;padding:10px 0;border-bot
     <button class="btn" id="torchBtn" type="button" hidden>Lanterna</button>
     <button class="btn" id="flipBtn" type="button" hidden>Trocar câmera</button>
   </div>
+  <div class="zoom" id="zoomRow" role="group" aria-label="Zoom">
+    <span>Zoom</span>
+    <button class="btn sm on" type="button" data-z="1" aria-pressed="true">1×</button>
+    <button class="btn sm" type="button" data-z="2" aria-pressed="false">2×</button>
+    <button class="btn sm" type="button" data-z="3" aria-pressed="false">3×</button>
+    <button class="btn sm" type="button" data-z="5" aria-pressed="false">5×</button>
+  </div>
+  <p class="hint">De longe: use 2× ou 3× e segure o celular firme por um segundo. Vários códigos pequenos: chegue um pouco mais perto em 1×.</p>
 
   <div class="counts" id="counts"></div>
 
@@ -176,10 +191,12 @@ li{display:grid;grid-template-columns:44px 1fr;gap:8px;padding:10px 0;border-bot
   }
 
   /* ---------- câmera ---------- */
-  const video = $('video'), overlay = $('overlay');
-  let stream = null, running = false, paused = false, facing = 'environment', detector = null, torchOn = false;
+  const video = $('video'), overlay = $('overlay'), stage = $('stage');
+  let stream = null, track = null, caps = {}, running = false, paused = false, facing = 'environment', detector = null, torchOn = false;
+  let zoomWanted = 1, digitalZoom = 1;
   const work = document.createElement('canvas');
   const wctx = work.getContext('2d', { willReadFrequently: true });
+  const recent = new Map(); /* conteúdo -> {pts, fresh, t} para desenhar e mascarar */
 
   const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   const embedded = (() => { try { return window.top !== window.self; } catch (e) { return true; } })();
@@ -198,26 +215,36 @@ li{display:grid;grid-template-columns:44px 1fr;gap:8px;padding:10px 0;border-bot
     $('startErr').textContent = '';
     const fail = msg => { $('startErr').textContent = msg; $('startMsg').hidden = true; $('startBtn').hidden = false; };
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      fail('Este navegador não liberou a câmera. Abra a página por um endereço https (GitHub Pages) no Chrome ou Safari.');
+      fail('Este navegador não liberou a câmera. Abra a página por um endereço https no Chrome ou Safari.');
       return;
     }
     try {
       if (stream) stream.getTracks().forEach(t => t.stop());
       stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
-        video: { facingMode: { ideal: facing }, width: { ideal: 1920 }, height: { ideal: 1080 } }
+        video: { facingMode: { ideal: facing }, width: { ideal: 3840 }, height: { ideal: 2160 }, frameRate: { ideal: 30 } }
       });
     } catch (e) {
-      fail(e.name === 'NotAllowedError' ? permHelp() : 'Não consegui abrir a câmera (' + e.name + ').');
-      return;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: facing }, width: { ideal: 1920 }, height: { ideal: 1080 } } });
+      } catch (e2) {
+        fail(e2.name === 'NotAllowedError' ? permHelp() : 'Não consegui abrir a câmera (' + e2.name + ').');
+        return;
+      }
     }
     video.srcObject = stream;
     await video.play().catch(() => {});
     $('start').hidden = true;
     running = true; paused = false;
     $('pauseBtn').disabled = false; $('pauseBtn').textContent = 'Pausar';
-    const track = stream.getVideoTracks()[0];
-    const caps = track.getCapabilities ? track.getCapabilities() : {};
+    track = stream.getVideoTracks()[0];
+    caps = track.getCapabilities ? track.getCapabilities() : {};
+    try {
+      const adv = {};
+      if (caps.focusMode && caps.focusMode.includes('continuous')) adv.focusMode = 'continuous';
+      if (caps.exposureMode && caps.exposureMode.includes('continuous')) adv.exposureMode = 'continuous';
+      if (Object.keys(adv).length) await track.applyConstraints({ advanced: [adv] });
+    } catch (e) {}
     $('torchBtn').hidden = !caps.torch;
     try { const cams = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput'); $('flipBtn').hidden = cams.length < 2; } catch (e) {}
     if (!detector && 'BarcodeDetector' in window) {
@@ -226,38 +253,66 @@ li{display:grid;grid-template-columns:44px 1fr;gap:8px;padding:10px 0;border-bot
         if (f.includes('qr_code')) detector = new BarcodeDetector({ formats: ['qr_code'] });
       } catch (e) {}
     }
+    await setZoom(zoomWanted);
     keepAwake();
     setState();
     loop();
   }
 
+  function resLabel() {
+    const h = Math.min(video.videoWidth, video.videoHeight);
+    if (!h) return '';
+    return h >= 2160 ? '4K' : h >= 1440 ? '1440p' : h >= 1080 ? '1080p' : h >= 720 ? '720p' : h + 'p';
+  }
   function setState() {
     const s = $('camState');
     if (!running) { s.textContent = 'Desligada'; s.className = 'state'; }
     else if (paused) { s.textContent = 'Pausada'; s.className = 'state'; }
-    else { s.textContent = detector ? 'Lendo' : 'Lendo (modo compatível)'; s.className = 'state live'; }
+    else { s.textContent = 'Lendo · ' + resLabel() + (zoomWanted > 1 ? ' · ' + zoomWanted + '×' : ''); s.className = 'state live'; }
   }
+  video.addEventListener('resize', setState);
+
+  async function setZoom(z) {
+    zoomWanted = z;
+    let hw = 1;
+    if (track && caps.zoom && caps.zoom.max > caps.zoom.min) {
+      hw = Math.min(z, caps.zoom.max);
+      try { await track.applyConstraints({ advanced: [{ zoom: Math.max(caps.zoom.min, hw) }] }); }
+      catch (e) { hw = 1; }
+    }
+    digitalZoom = Math.max(1, z / hw);
+    stage.style.transform = digitalZoom > 1 ? `scale(${digitalZoom})` : '';
+    recent.clear(); drawBoxes();
+    document.querySelectorAll('#zoomRow [data-z]').forEach(b => {
+      const on = Number(b.dataset.z) === z; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on);
+    });
+    setState();
+  }
+  $('zoomRow').addEventListener('click', e => { const b = e.target.closest('[data-z]'); if (b) setZoom(Number(b.dataset.z)); });
 
   let wake = null;
   async function keepAwake() { try { if ('wakeLock' in navigator) wake = await navigator.wakeLock.request('screen'); } catch (e) {} }
 
-  function drawBoxes(codes) {
-    const r = overlay.getBoundingClientRect();
+  function drawBoxes() {
     const dpr = window.devicePixelRatio || 1;
-    if (overlay.width !== Math.round(r.width * dpr)) { overlay.width = Math.round(r.width * dpr); overlay.height = Math.round(r.height * dpr); }
+    const cw = overlay.clientWidth, ch = overlay.clientHeight;
+    if (overlay.width !== Math.round(cw * dpr) || overlay.height !== Math.round(ch * dpr)) { overlay.width = Math.round(cw * dpr); overlay.height = Math.round(ch * dpr); }
     const ctx = overlay.getContext('2d');
     ctx.clearRect(0, 0, overlay.width, overlay.height);
-    if (!codes.length) return;
     const vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw || !recent.size) return;
     const s = Math.max(overlay.width / vw, overlay.height / vh);
     const ox = (overlay.width - vw * s) / 2, oy = (overlay.height - vh * s) / 2;
-    codes.forEach(c => {
-      ctx.lineWidth = 4 * dpr;
-      ctx.strokeStyle = c.fresh ? '#22e3a8' : 'rgba(255,255,255,.55)';
+    const now = performance.now();
+    for (const [k, c] of recent) {
+      if (now - c.t > 900) { recent.delete(k); continue; }
+      if (!c.fresh) continue; /* já escaneado: ignora em silêncio, sem marcar na tela */
+      ctx.lineWidth = Math.max(2, 4 / digitalZoom) * dpr;
+      ctx.strokeStyle = '#22e3a8';
       ctx.beginPath();
-      c.pts.forEach((p, k) => { const x = p.x * s + ox, y = p.y * s + oy; k ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+      c.pts.forEach((p, i) => { const x = p.x * s + ox, y = p.y * s + oy; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
       ctx.closePath(); ctx.stroke();
-    });
+    }
   }
 
   function maskPoly(pts) {
@@ -267,27 +322,56 @@ li{display:grid;grid-template-columns:44px 1fr;gap:8px;padding:10px 0;border-bot
     wctx.closePath(); wctx.fill();
   }
 
-  async function scanFrame() {
+  /* Área visível (considera o zoom digital) e a fila de regiões para varrer */
+  function viewRect() {
     const vw = video.videoWidth, vh = video.videoHeight;
-    if (!vw) return [];
+    const w = vw / digitalZoom, h = vh / digitalZoom;
+    return { x: (vw - w) / 2, y: (vh - h) / 2, w, h };
+  }
+  function tilesOf(r, n) {
+    const out = [], tw = Math.min(r.w, r.w / n * 1.35), th = Math.min(r.h, r.h / n * 1.35);
+    for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+      out.push({
+        x: r.x + Math.min(r.w - tw, Math.max(0, r.w / n * i - (tw - r.w / n) / 2)),
+        y: r.y + Math.min(r.h - th, Math.max(0, r.h / n * j - (th - r.h / n) / 2)),
+        w: tw, h: th
+      });
+    }
+    return out;
+  }
+  let tileIdx = 0, tick = 0;
+  function nextRegions() {
+    const r = viewRect();
+    const tiles = tilesOf(r, 2);
+    if (Math.max(r.w, r.h) > 2400) tiles.push(...tilesOf(r, 3));
+    tick++;
+    /* alterna: quadro inteiro, um pedaço em resolução máxima, quadro inteiro, outro pedaço... */
+    if (detector) { const t = tiles[tileIdx++ % tiles.length]; return [{ r, max: 1920 }, { r: t, max: 1920 }]; }
+    if (tick % 2) return [{ r, max: 1280 }];
+    return [{ r: tiles[tileIdx++ % tiles.length], max: 1280 }];
+  }
+
+  async function decodeRegion(r, maxDim) {
+    const s = Math.min(1, maxDim / Math.max(r.w, r.h));
+    const w = Math.max(1, Math.round(r.w * s)), h = Math.max(1, Math.round(r.h * s));
+    if (work.width !== w || work.height !== h) { work.width = w; work.height = h; }
+    wctx.drawImage(video, r.x, r.y, r.w, r.h, 0, 0, w, h);
+    const back = p => ({ x: p.x / s + r.x, y: p.y / s + r.y });
     const out = [];
     if (detector) {
       try {
-        const res = await detector.detect(video);
-        res.forEach(r => out.push({ data: r.rawValue, pts: r.cornerPoints }));
+        (await detector.detect(work)).forEach(c => out.push({ data: c.rawValue, pts: c.cornerPoints.map(back) }));
         return out;
-      } catch (e) { detector = null; setState(); }
+      } catch (e) { detector = null; }
     }
     if (!window.jsQR) return out;
-    const sc = Math.min(1, 960 / Math.max(vw, vh));
-    const w = Math.round(vw * sc), h = Math.round(vh * sc);
-    work.width = w; work.height = h;
-    wctx.drawImage(video, 0, 0, w, h);
-    for (let i = 0; i < 4; i++) {
+    /* esconde os códigos já vistos agora há pouco, para o leitor ir direto nos outros */
+    for (const c of recent.values()) maskPoly(c.pts.map(p => ({ x: (p.x - r.x) * s, y: (p.y - r.y) * s })));
+    for (let i = 0; i < 8; i++) {
       const q = jsQR(wctx.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: 'dontInvert' });
       if (!q) break;
       const L = q.location, lp = [L.topLeftCorner, L.topRightCorner, L.bottomRightCorner, L.bottomLeftCorner];
-      out.push({ data: q.data, pts: lp.map(p => ({ x: p.x / sc, y: p.y / sc })) });
+      out.push({ data: q.data, pts: lp.map(back) });
       maskPoly(lp);
     }
     return out;
@@ -297,23 +381,30 @@ li{display:grid;grid-template-columns:44px 1fr;gap:8px;padding:10px 0;border-bot
   function loop() {
     if (!running) return;
     setTimeout(async () => {
-      if (!paused && !busy && !document.hidden) {
+      if (!paused && !busy && !document.hidden && video.videoWidth) {
         busy = true;
         try {
-          const codes = await scanFrame();
-          codes.forEach(c => { c.fresh = addCode(c.data); });
-          drawBoxes(codes);
+          for (const job of nextRegions()) {
+            const codes = await decodeRegion(job.r, job.max);
+            const now = performance.now();
+            codes.forEach(c => {
+              const fresh = addCode(c.data);
+              const prev = recent.get(c.data);
+              recent.set(c.data, { pts: c.pts, fresh: fresh || (prev && prev.fresh && now - prev.t < 900), t: now });
+            });
+          }
         } catch (e) {}
+        drawBoxes();
         busy = false;
       }
       loop();
-    }, detector ? 90 : 140);
+    }, detector ? 60 : 25);
   }
 
   $('startBtn').addEventListener('click', startCam);
   $('pauseBtn').addEventListener('click', () => {
     paused = !paused; $('pauseBtn').textContent = paused ? 'Continuar' : 'Pausar';
-    if (paused) drawBoxes([]);
+    if (paused) { recent.clear(); drawBoxes(); }
     setState();
   });
   $('torchBtn').addEventListener('click', async () => {
@@ -323,7 +414,7 @@ li{display:grid;grid-template-columns:44px 1fr;gap:8px;padding:10px 0;border-bot
       $('torchBtn').classList.toggle('on', torchOn);
     } catch (e) { toast('Lanterna indisponível nesta câmera.'); }
   });
-  $('flipBtn').addEventListener('click', () => { facing = facing === 'environment' ? 'user' : 'environment'; startCam(); });
+  $('flipBtn').addEventListener('click', () => { facing = facing === 'environment' ? 'user' : 'environment'; torchOn = false; $('torchBtn').classList.remove('on'); startCam(); });
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) {
       renderAll();
