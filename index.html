@@ -72,6 +72,14 @@ li{display:grid;grid-template-columns:44px 1fr;gap:8px;padding:10px 0;border-bot
 .chip.validado{background:var(--ok-bg);color:var(--ok)}
 .chip.warn{background:var(--warn-bg);color:var(--warn)}
 .acts{display:flex;gap:6px;flex-wrap:wrap}
+.sheet{position:fixed;left:0;right:0;bottom:0;z-index:8;background:var(--surface);border-top:1px solid var(--line);box-shadow:0 -10px 30px rgb(0 0 0 / .45);padding-top:16px;padding-bottom:calc(16px + env(safe-area-inset-bottom,0px));padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.sheet-in{max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:10px}
+.sheet p{margin:0;font-size:14px;color:var(--muted)}
+.sheet p b{color:var(--ink);overflow-wrap:anywhere}
+.sheet label{font-weight:700;font-size:14px}
+.sheet input{width:100%;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:12px;font:16px var(--f-display)}
+.sheet input:focus{outline:2px solid var(--accent);border-color:var(--accent)}
+.who{font:12px var(--f-mono);color:var(--muted)}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(20px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:9px 14px;border-radius:999px;font-size:14px;z-index:9;max-width:calc(100% - 32px)}
 .more{text-align:center}
 [hidden]{display:none!important}
@@ -136,6 +144,18 @@ li{display:grid;grid-template-columns:44px 1fr;gap:8px;padding:10px 0;border-bot
   <div class="more"><button class="btn sm" id="moreBtn" type="button" hidden>Mostrar mais</button></div>
 </main>
 
+<div class="sheet" id="ask" hidden role="dialog" aria-labelledby="askTitle">
+  <div class="sheet-in">
+    <p id="askTitle">Item <b id="askNum"></b> · <b id="askHost"></b></p>
+    <label for="askName">Nome que apareceu no site do evento</label>
+    <input id="askName" type="text" autocomplete="off" autocapitalize="words" enterkeyhint="done" placeholder="Ex.: Fernanda Lourenco Ferreira">
+    <div class="row">
+      <button class="btn primary sm" id="askOk" type="button">Validado (+ pontos)</button>
+      <button class="btn sm" id="askDup" type="button">Já coletado</button>
+      <button class="btn sm" id="askLater" type="button">Depois</button>
+    </div>
+  </div>
+</div>
 <div class="toast" id="toast" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/barcode-detector@3.2.1/dist/iife/ponyfill.min.js"></script>
@@ -442,6 +462,7 @@ li{display:grid;grid-template-columns:44px 1fr;gap:8px;padding:10px 0;border-bot
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) {
       renderAll();
+      if (lastOpened && lastOpened.s === 'aberto') showAsk(lastOpened);
       if (running) { keepAwake(); if (!stream || !stream.active) startCam(); }
     }
   });
@@ -455,10 +476,12 @@ li{display:grid;grid-template-columns:44px 1fr;gap:8px;padding:10px 0;border-bot
     const li = el('li'); li.dataset.t = it.t;
     li.append(el('div', 'n', '#' + n));
     const b = el('div', 'b');
-    const dom = el('div', 'dom', p.url ? p.host : 'Texto');
-    dom.append(el('span', 'chip ' + it.s, label[it.s]));
+    const dom = el('div', 'dom', it.nome || (p.url ? p.host : 'Texto'));
+    dom.append(el('span', 'chip ' + it.s, it.s === 'validado' && it.dup ? 'Já coletado' : label[it.s]));
     if (p.url && !p.secure) dom.append(el('span', 'chip warn', 'Sem HTTPS'));
-    b.append(dom, el('div', 'url', it.d));
+    b.append(dom);
+    if (it.nome && p.url) b.append(el('div', 'who', p.host));
+    b.append(el('div', 'url', it.d));
     const acts = el('div', 'acts');
     if (p.url) {
       const a = el('a', 'btn sm', 'Abrir'); a.href = p.href; a.target = '_blank'; a.rel = 'noopener noreferrer';
@@ -466,7 +489,8 @@ li{display:grid;grid-template-columns:44px 1fr;gap:8px;padding:10px 0;border-bot
     }
     const c = el('button', 'btn sm', 'Copiar'); c.type = 'button'; c.dataset.act = 'copy';
     const v = el('button', 'btn sm' + (it.s === 'validado' ? ' on' : ''), it.s === 'validado' ? '✓ Validado' : 'Marcar validado'); v.type = 'button'; v.dataset.act = 'val';
-    acts.append(c, v); b.append(acts); li.append(b);
+    const nm = el('button', 'btn sm', it.nome ? 'Editar nome' : 'Pôr nome'); nm.type = 'button'; nm.dataset.act = 'name';
+    acts.append(nm, c, v); b.append(acts); li.append(b);
     return li;
   }
   function byT(t) { return items.find(x => String(x.t) === String(t)); }
@@ -479,7 +503,7 @@ li{display:grid;grid-template-columns:44px 1fr;gap:8px;padding:10px 0;border-bot
     const list = $('list'); list.replaceChildren();
     const q = filter.toLowerCase();
     const pool = [];
-    for (let i = items.length - 1; i >= 0; i--) if (!q || items[i].d.toLowerCase().includes(q)) pool.push(i);
+    for (let i = items.length - 1; i >= 0; i--) if (!q || (items[i].d + ' ' + (items[i].nome || '')).toLowerCase().includes(q)) pool.push(i);
     pool.slice(0, shown).forEach(i => list.append(itemNode(items[i], i + 1)));
     $('moreBtn').hidden = pool.length <= shown;
     $('moreBtn').textContent = `Mostrar mais (${pool.length - shown} restantes)`;
@@ -514,8 +538,35 @@ li{display:grid;grid-template-columns:44px 1fr;gap:8px;padding:10px 0;border-bot
     const it = byT(btn.closest('li').dataset.t); if (!it) return;
     if (btn.dataset.act === 'open') markOpened(it);
     if (btn.dataset.act === 'copy') copyText(it.d, 'Copiado');
-    if (btn.dataset.act === 'val') { it.s = it.s === 'validado' ? 'aberto' : 'validado'; save(); refreshItem(it); updateHud(); }
+    if (btn.dataset.act === 'name') showAsk(it);
+    if (btn.dataset.act === 'val') { it.s = it.s === 'validado' ? 'aberto' : 'validado'; if (it.s !== 'validado') it.dup = false; save(); refreshItem(it); updateHud(); }
   });
+  let askItem = null;
+  function showAsk(it) {
+    askItem = it;
+    $('askNum').textContent = '#' + (items.indexOf(it) + 1);
+    $('askHost').textContent = parse(it.d).host || 'texto';
+    $('askName').value = it.nome || '';
+    $('ask').hidden = false;
+    try { $('askName').focus({ preventScroll: true }); } catch (e) {}
+  }
+  function closeAsk(status, dup) {
+    const it = askItem;
+    if (it) {
+      const nome = $('askName').value.trim();
+      if (nome) it.nome = nome;
+      if (status) { it.s = status; it.dup = !!dup; }
+      save(); refreshItem(it); updateHud();
+      if (status) toast(dup ? 'Marcado como já coletado' : (nome ? nome.split(' ')[0] + ' validado' : 'Validado'));
+    }
+    if (lastOpened === it) lastOpened = null;
+    askItem = null; $('ask').hidden = true; $('askName').blur();
+  }
+  $('askOk').addEventListener('click', () => closeAsk('validado', false));
+  $('askDup').addEventListener('click', () => closeAsk('validado', true));
+  $('askLater').addEventListener('click', () => closeAsk(null));
+  $('askName').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); closeAsk('validado', false); } });
+
   $('nextBtn').addEventListener('click', e => { const it = byT(e.currentTarget.dataset.t); if (it) markOpened(it); });
   $('search').addEventListener('input', e => { filter = e.target.value.trim(); shown = 100; renderAll(); });
   $('moreBtn').addEventListener('click', () => { shown += 200; renderAll(); });
@@ -533,8 +584,8 @@ li{display:grid;grid-template-columns:44px 1fr;gap:8px;padding:10px 0;border-bot
   $('dlTxt').addEventListener('click', () => download(`qrcodes-${stamp()}.txt`, items.map(x => x.d).join('\n'), 'text/plain'));
   $('dlCsv').addEventListener('click', () => {
     const esc = s => '"' + String(s).replace(/"/g, '""') + '"';
-    const rows = [['numero', 'conteudo', 'dominio', 'status', 'escaneado_em'].join(';')];
-    items.forEach((x, i) => rows.push([i + 1, esc(x.d), esc(parse(x.d).host || ''), label[x.s], esc(new Date(x.t).toLocaleString('pt-BR'))].join(';')));
+    const rows = [['numero', 'nome', 'conteudo', 'dominio', 'status', 'escaneado_em'].join(';')];
+    items.forEach((x, i) => rows.push([i + 1, esc(x.nome || ''), esc(x.d), esc(parse(x.d).host || ''), x.s === 'validado' && x.dup ? 'Já coletado' : label[x.s], esc(new Date(x.t).toLocaleString('pt-BR'))].join(';')));
     download(`qrcodes-${stamp()}.csv`, '﻿' + rows.join('\n'), 'text/csv');
   });
   $('copyPending').addEventListener('click', () => {
