@@ -138,6 +138,7 @@ li{display:grid;grid-template-columns:44px 1fr;gap:8px;padding:10px 0;border-bot
 
 <div class="toast" id="toast" hidden></div>
 
+<script src="https://cdn.jsdelivr.net/npm/barcode-detector@3.2.1/dist/iife/ponyfill.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 <script>
 (() => {
@@ -247,16 +248,27 @@ li{display:grid;grid-template-columns:44px 1fr;gap:8px;padding:10px 0;border-bot
     } catch (e) {}
     $('torchBtn').hidden = !caps.torch;
     try { const cams = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput'); $('flipBtn').hidden = cams.length < 2; } catch (e) {}
-    if (!detector && 'BarcodeDetector' in window) {
-      try {
-        const f = await BarcodeDetector.getSupportedFormats();
-        if (f.includes('qr_code')) detector = new BarcodeDetector({ formats: ['qr_code'] });
-      } catch (e) {}
-    }
+    if (!detector) detector = await makeDetector();
     await setZoom(zoomWanted);
     keepAwake();
     setState();
     loop();
+  }
+
+  /* Leitor: nativo do navegador (Android/Chrome) ou ZXing em WebAssembly (iPhone/Safari). jsQR fica só de reserva. */
+  const Pony = window.BarcodeDetectionAPI;
+  try { Pony && Pony.prepareZXingModule && Pony.prepareZXingModule({ fireImmediately: true }); } catch (e) {}
+  async function makeDetector() {
+    if ('BarcodeDetector' in window) {
+      try {
+        const f = await window.BarcodeDetector.getSupportedFormats();
+        if (f.includes('qr_code')) return new window.BarcodeDetector({ formats: ['qr_code'] });
+      } catch (e) {}
+    }
+    if (Pony && Pony.BarcodeDetector) {
+      try { return new Pony.BarcodeDetector({ formats: ['qr_code'] }); } catch (e) {}
+    }
+    return null;
   }
 
   function resLabel() {
@@ -346,8 +358,12 @@ li{display:grid;grid-template-columns:44px 1fr;gap:8px;padding:10px 0;border-bot
     if (Math.max(r.w, r.h) > 2400) tiles.push(...tilesOf(r, 3));
     tick++;
     /* alterna: quadro inteiro, um pedaço em resolução máxima, quadro inteiro, outro pedaço... */
-    if (detector) { const t = tiles[tileIdx++ % tiles.length]; return [{ r, max: 1920 }, { r: t, max: 1920 }]; }
-    if (tick % 2) return [{ r, max: 1280 }];
+    if (detector) {
+      const jobs = [{ r, max: 1280 }];
+      if (tick % 2 === 0) jobs.push({ r: tiles[tileIdx++ % tiles.length], max: 1600 });
+      return jobs;
+    }
+    if (tick % 2) return [{ r, max: 960 }];
     return [{ r: tiles[tileIdx++ % tiles.length], max: 1280 }];
   }
 
@@ -377,10 +393,16 @@ li{display:grid;grid-template-columns:44px 1fr;gap:8px;padding:10px 0;border-bot
     return out;
   }
 
-  let busy = false;
+  let busy = false, loopGen = 0;
   function loop() {
-    if (!running) return;
-    setTimeout(async () => {
+    const gen = ++loopGen;
+    const next = () => {
+      if (!running || gen !== loopGen) return;
+      if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(step);
+      else setTimeout(step, 16);
+    };
+    const step = async () => {
+      if (gen !== loopGen) return;
       if (!paused && !busy && !document.hidden && video.videoWidth) {
         busy = true;
         try {
@@ -392,19 +414,21 @@ li{display:grid;grid-template-columns:44px 1fr;gap:8px;padding:10px 0;border-bot
               const prev = recent.get(c.data);
               recent.set(c.data, { pts: c.pts, fresh: fresh || (prev && prev.fresh && now - prev.t < 900), t: now });
             });
+            if (codes.some(c => recent.get(c.data).fresh)) drawBoxes();
           }
         } catch (e) {}
         drawBoxes();
         busy = false;
       }
-      loop();
-    }, detector ? 60 : 25);
+      next();
+    };
+    next();
   }
 
   $('startBtn').addEventListener('click', startCam);
   $('pauseBtn').addEventListener('click', () => {
     paused = !paused; $('pauseBtn').textContent = paused ? 'Continuar' : 'Pausar';
-    if (paused) { recent.clear(); drawBoxes(); }
+    if (paused) { recent.clear(); drawBoxes(); } else loop();
     setState();
   });
   $('torchBtn').addEventListener('click', async () => {
