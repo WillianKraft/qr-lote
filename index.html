@@ -148,7 +148,7 @@ li{display:grid;grid-template-columns:44px 1fr;gap:8px;padding:10px 0;border-bot
   <div class="sheet-in">
     <p id="askTitle">Item <b id="askNum"></b> · <b id="askHost"></b></p>
     <label for="askName">Nome que apareceu no site do evento</label>
-    <input id="askName" type="text" autocomplete="off" autocapitalize="words" enterkeyhint="done" placeholder="Ex.: Fernanda Lourenco Ferreira">
+    <input id="askName" type="text" autocomplete="off" autocapitalize="words" enterkeyhint="done" placeholder="Ex.: Fernanda">
     <div class="row">
       <button class="btn primary sm" id="askOk" type="button">Validado (+ pontos)</button>
       <button class="btn sm" id="askDup" type="button">Já coletado</button>
@@ -476,7 +476,7 @@ li{display:grid;grid-template-columns:44px 1fr;gap:8px;padding:10px 0;border-bot
     const li = el('li'); li.dataset.t = it.t;
     li.append(el('div', 'n', '#' + n));
     const b = el('div', 'b');
-    const dom = el('div', 'dom', it.nome || (p.url ? p.host : 'Texto'));
+    const dom = el('div', 'dom', it.nome ? 'Ingresso de ' + it.nome : (p.url ? p.host : 'Texto'));
     dom.append(el('span', 'chip ' + it.s, it.s === 'validado' && it.dup ? 'Já coletado' : label[it.s]));
     if (p.url && !p.secure) dom.append(el('span', 'chip warn', 'Sem HTTPS'));
     b.append(dom);
