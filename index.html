@@ -268,7 +268,7 @@ li{display:grid;grid-template-columns:44px 1fr;gap:8px;padding:10px 0;border-bot
     } catch (e) {}
     $('torchBtn').hidden = !caps.torch;
     try { const cams = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput'); $('flipBtn').hidden = cams.length < 2; } catch (e) {}
-    if (!detector) detector = await makeDetector();
+    if (!detector) detector = await detectorReady;
     await setZoom(zoomWanted);
     keepAwake();
     setState();
@@ -278,18 +278,29 @@ li{display:grid;grid-template-columns:44px 1fr;gap:8px;padding:10px 0;border-bot
   /* Leitor: nativo do navegador (Android/Chrome) ou ZXing em WebAssembly (iPhone/Safari). jsQR fica só de reserva. */
   const Pony = window.BarcodeDetectionAPI;
   try { Pony && Pony.prepareZXingModule && Pony.prepareZXingModule({ fireImmediately: true }); } catch (e) {}
+  let engine = 'básico';
+  function engineName() { return detector ? engine : 'básico'; }
   async function makeDetector() {
     if ('BarcodeDetector' in window) {
       try {
         const f = await window.BarcodeDetector.getSupportedFormats();
-        if (f.includes('qr_code')) return new window.BarcodeDetector({ formats: ['qr_code'] });
+        if (f.includes('qr_code')) { engine = 'nativo'; return new window.BarcodeDetector({ formats: ['qr_code'] }); }
       } catch (e) {}
     }
     if (Pony && Pony.BarcodeDetector) {
-      try { return new Pony.BarcodeDetector({ formats: ['qr_code'] }); } catch (e) {}
+      try {
+        const d = new Pony.BarcodeDetector({ formats: ['qr_code'] });
+        engine = 'ZXing';
+        /* aquece o leitor antes do primeiro QR aparecer */
+        const warm = document.createElement('canvas'); warm.width = warm.height = 64;
+        await d.detect(warm).catch(() => {});
+        return d;
+      } catch (e) {}
     }
     return null;
   }
+
+  const detectorReady = makeDetector();
 
   function resLabel() {
     const h = Math.min(video.videoWidth, video.videoHeight);
@@ -300,7 +311,7 @@ li{display:grid;grid-template-columns:44px 1fr;gap:8px;padding:10px 0;border-bot
     const s = $('camState');
     if (!running) { s.textContent = 'Desligada'; s.className = 'state'; }
     else if (paused) { s.textContent = 'Pausada'; s.className = 'state'; }
-    else { s.textContent = 'Lendo · ' + resLabel() + (zoomWanted > 1 ? ' · ' + zoomWanted + '×' : ''); s.className = 'state live'; }
+    else { s.textContent = 'Lendo · ' + resLabel() + (zoomWanted > 1 ? ' · ' + zoomWanted + '×' : '') + ' · ' + engineName(); s.className = 'state live'; }
   }
   video.addEventListener('resize', setState);
 
@@ -372,19 +383,18 @@ li{display:grid;grid-template-columns:44px 1fr;gap:8px;padding:10px 0;border-bot
     return out;
   }
   let tileIdx = 0, tick = 0;
+  /* Um trabalho leve por quadro, para reagir na hora:
+     inteiro → centro em alta → inteiro → um pedaço em alta (códigos pequenos/longe) */
   function nextRegions() {
     const r = viewRect();
+    const c = { x: r.x + r.w * 0.2, y: r.y + r.h * 0.2, w: r.w * 0.6, h: r.h * 0.6 };
+    const step = tick++ % 4;
+    const full = detector ? 1024 : 800;
+    if (step === 0 || step === 2) return [{ r, max: full }];
+    if (step === 1) return [{ r: c, max: full }];
     const tiles = tilesOf(r, 2);
     if (Math.max(r.w, r.h) > 2400) tiles.push(...tilesOf(r, 3));
-    tick++;
-    /* alterna: quadro inteiro, um pedaço em resolução máxima, quadro inteiro, outro pedaço... */
-    if (detector) {
-      const jobs = [{ r, max: 1280 }];
-      if (tick % 2 === 0) jobs.push({ r: tiles[tileIdx++ % tiles.length], max: 1600 });
-      return jobs;
-    }
-    if (tick % 2) return [{ r, max: 960 }];
-    return [{ r: tiles[tileIdx++ % tiles.length], max: 1280 }];
+    return [{ r: tiles[tileIdx++ % tiles.length], max: detector ? 1280 : 1024 }];
   }
 
   async function decodeRegion(r, maxDim) {
@@ -398,7 +408,7 @@ li{display:grid;grid-template-columns:44px 1fr;gap:8px;padding:10px 0;border-bot
       try {
         (await detector.detect(work)).forEach(c => out.push({ data: c.rawValue, pts: c.cornerPoints.map(back) }));
         return out;
-      } catch (e) { detector = null; }
+      } catch (e) { detector = null; setState(); }
     }
     if (!window.jsQR) return out;
     /* esconde os códigos já vistos agora há pouco, para o leitor ir direto nos outros */
