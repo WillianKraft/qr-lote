@@ -279,7 +279,7 @@ li{display:grid;grid-template-columns:44px 1fr;gap:8px;padding:10px 0;border-bot
   const Pony = window.BarcodeDetectionAPI;
   try { Pony && Pony.prepareZXingModule && Pony.prepareZXingModule({ fireImmediately: true }); } catch (e) {}
   let engine = 'básico';
-  function engineName() { return detector ? engine : 'básico'; }
+  let engineName = () => (detector ? engine : 'básico');
   async function makeDetector() {
     if ('BarcodeDetector' in window) {
       try {
@@ -423,6 +423,110 @@ li{display:grid;grid-template-columns:44px 1fr;gap:8px;padding:10px 0;border-bot
     return out;
   }
 
+  function handleCodes(codes) {
+    if (!codes.length) return;
+    const now = performance.now();
+    codes.forEach(c => {
+      const fresh = addCode(c.data);
+      const prev = recent.get(c.data);
+      recent.set(c.data, { pts: c.pts, fresh: fresh || (prev && prev.fresh && now - prev.t < 900), t: now });
+    });
+    drawBoxes();
+  }
+
+  /* ---------- leitura em paralelo (vários núcleos do processador) ----------
+     Cada "trabalhador" roda o leitor em segundo plano. Um lê o quadro inteiro (códigos grandes, na hora)
+     e os outros leem pedaços em resolução cheia (códigos pequenos ou longe), todos ao mesmo tempo. */
+  const ZXING_URL = 'https://cdn.jsdelivr.net/npm/barcode-detector@3.2.1/dist/iife/ponyfill.min.js';
+  const WORKER_SRC = `
+    let det = null;
+    async function init(url) {
+      try {
+        if (self.BarcodeDetector) {
+          const f = await self.BarcodeDetector.getSupportedFormats();
+          if (f.includes('qr_code')) { det = new self.BarcodeDetector({ formats: ['qr_code'] }); return 'nativo'; }
+        }
+      } catch (e) {}
+      importScripts(url);
+      const P = self.BarcodeDetectionAPI;
+      try { P.prepareZXingModule && P.prepareZXingModule({ fireImmediately: true }); } catch (e) {}
+      det = new P.BarcodeDetector({ formats: ['qr_code'] });
+      await det.detect(new ImageData(64, 64));
+      return 'ZXing';
+    }
+    onmessage = async (e) => {
+      const m = e.data;
+      if (m.type === 'init') {
+        try { postMessage({ type: 'ready', engine: await init(m.url) }); }
+        catch (err) { postMessage({ type: 'fail', error: String(err) }); }
+        return;
+      }
+      let codes = [];
+      try {
+        const res = await det.detect(new ImageData(new Uint8ClampedArray(m.buf), m.w, m.h));
+        codes = res.map(r => ({ data: r.rawValue, pts: r.cornerPoints.map(p => ({ x: p.x, y: p.y })) }));
+      } catch (err) {}
+      postMessage({ type: 'done', codes });
+    };`;
+  const pool = [];
+  let poolEngine = '';
+  const cap = document.createElement('canvas');
+  const cctx = cap.getContext('2d', { willReadFrequently: true });
+  function startPool() {
+    if (!window.Worker || !window.Blob) return;
+    let url;
+    try { url = URL.createObjectURL(new Blob([WORKER_SRC], { type: 'text/javascript' })); } catch (e) { return; }
+    const n = Math.max(2, Math.min(4, (navigator.hardwareConcurrency || 4) - 1));
+    for (let i = 0; i < n; i++) {
+      let w;
+      try { w = new Worker(url); } catch (e) { break; }
+      const slot = { w, ready: false, dead: false, busy: false, job: null, since: 0 };
+      w.onmessage = e => {
+        const m = e.data;
+        if (m.type === 'ready') { slot.ready = true; poolEngine = m.engine; setState(); }
+        else if (m.type === 'fail') { slot.dead = true; setState(); }
+        else if (m.type === 'done') {
+          const job = slot.job; slot.busy = false; slot.job = null;
+          if (job) handleCodes(m.codes.map(c => ({ data: c.data, pts: c.pts.map(p => ({ x: p.x / job.s + job.r.x, y: p.y / job.s + job.r.y })) })));
+        }
+      };
+      w.onerror = () => { slot.dead = true; setState(); };
+      w.postMessage({ type: 'init', url: ZXING_URL });
+      pool.push(slot);
+    }
+  }
+  const liveWorkers = () => pool.filter(p => p.ready && !p.dead);
+  engineName = () => {
+    const n = liveWorkers().length;
+    return n ? poolEngine + ' ×' + n : (detector ? engine : 'básico');
+  };
+
+  let poolTile = 0;
+  function nextPoolJob(first) {
+    const r = viewRect();
+    /* a cada quadro: o primeiro trabalhador livre lê o quadro inteiro (rápido), os outros leem pedaços em resolução cheia */
+    if (first) return { r, max: 1024 };
+    const tiles = tilesOf(r, 2);
+    if (Math.max(r.w, r.h) > 2400) tiles.push(...tilesOf(r, 3));
+    return { r: tiles[poolTile++ % tiles.length], max: 1920 };
+  }
+  function dispatch() {
+    const now = performance.now();
+    let first = true;
+    for (const slot of liveWorkers()) {
+      if (slot.busy && now - slot.since > 3000) slot.busy = false; /* trabalhador travado: libera */
+      if (slot.busy) continue;
+      const job = nextPoolJob(first); first = false;
+      const sc = Math.min(1, job.max / Math.max(job.r.w, job.r.h));
+      const w = Math.max(1, Math.round(job.r.w * sc)), h = Math.max(1, Math.round(job.r.h * sc));
+      if (cap.width !== w || cap.height !== h) { cap.width = w; cap.height = h; }
+      cctx.drawImage(video, job.r.x, job.r.y, job.r.w, job.r.h, 0, 0, w, h);
+      const img = cctx.getImageData(0, 0, w, h);
+      slot.busy = true; slot.since = now; slot.job = { r: job.r, s: sc };
+      slot.w.postMessage({ type: 'scan', buf: img.data.buffer, w, h }, [img.data.buffer]);
+    }
+  }
+
   let busy = false, loopGen = 0;
   function loop() {
     const gen = ++loopGen;
@@ -433,27 +537,24 @@ li{display:grid;grid-template-columns:44px 1fr;gap:8px;padding:10px 0;border-bot
     };
     const step = async () => {
       if (gen !== loopGen) return;
-      if (!paused && !busy && !document.hidden && video.videoWidth) {
-        busy = true;
-        try {
-          for (const job of nextRegions()) {
-            const codes = await decodeRegion(job.r, job.max);
-            const now = performance.now();
-            codes.forEach(c => {
-              const fresh = addCode(c.data);
-              const prev = recent.get(c.data);
-              recent.set(c.data, { pts: c.pts, fresh: fresh || (prev && prev.fresh && now - prev.t < 900), t: now });
-            });
-            if (codes.some(c => recent.get(c.data).fresh)) drawBoxes();
-          }
-        } catch (e) {}
-        drawBoxes();
-        busy = false;
+      if (!paused && !document.hidden && video.videoWidth) {
+        if (liveWorkers().length) {
+          try { dispatch(); } catch (e) {}
+          drawBoxes();
+        } else if (!busy) {
+          busy = true;
+          try {
+            for (const job of nextRegions()) handleCodes(await decodeRegion(job.r, job.max));
+          } catch (e) {}
+          drawBoxes();
+          busy = false;
+        }
       }
       next();
     };
     next();
   }
+  startPool();
 
   $('startBtn').addEventListener('click', startCam);
   $('pauseBtn').addEventListener('click', () => {
