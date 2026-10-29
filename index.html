@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0d1412">
+<title>QR em Lote · Câmera</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --bg:#0d1412; --surface:#151f1c; --ink:#e4ece9; --muted:#93a39e; --line:#26332f;
+  --accent:#3cc49f; --accent-ink:#03201a; --accent-soft:#163a31;
+  --ok:#6ed28e; --ok-bg:#163223; --warn:#f0b25a; --warn-bg:#382811; --chip:#1e2a27;
+  --f-display:"Archivo","Helvetica Neue",Arial,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 var(--f-display)}
+body{padding-bottom:env(safe-area-inset-bottom,0px)}
+.cam{position:relative;background:#000;height:58vh;min-height:300px;overflow:hidden}
+.cam video,.cam canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.cam canvas{pointer-events:none}
+.flash{position:absolute;inset:0;box-shadow:inset 0 0 0 6px var(--accent);opacity:0;transition:opacity .25s;pointer-events:none}
+.flash.on{opacity:1;transition:none}
+.hud{position:absolute;left:0;right:0;top:0;display:flex;justify-content:space-between;align-items:flex-start;gap:8px;padding:calc(10px + env(safe-area-inset-top,0px)) max(12px,env(safe-area-inset-right,0px)) 10px max(12px,env(safe-area-inset-left,0px));background:linear-gradient(#000a,#0000)}
+.big{font-weight:800;font-stretch:118%;font-size:44px;line-height:.9;font-variant-numeric:tabular-nums}
+.big small{display:block;font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#cfe;opacity:.8;margin-top:6px}
+.state{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:6px 9px;border-radius:999px;background:#000a;color:#cfe}
+.state.live::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:#ff4d4d;margin-right:6px;animation:p 1.2s infinite}
+@keyframes p{50%{opacity:.2}}
+.last{position:absolute;left:12px;right:12px;bottom:12px;background:#000c;border-radius:10px;padding:8px 12px;font:12.5px/1.35 var(--f-mono);color:#dfe;overflow-wrap:anywhere;max-height:3.2em;overflow:hidden}
+.start{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px;text-align:center;background:var(--bg)}
+.start h1{margin:0;font-weight:800;font-stretch:118%;font-size:34px;line-height:1}
+.start h1 b{color:var(--accent)}
+.start p{margin:0;color:var(--muted);max-width:40ch}
+.wrap{max-width:760px;margin:0 auto;padding:16px max(16px,env(safe-area-inset-right,0px)) 120px max(16px,env(safe-area-inset-left,0px));display:flex;flex-direction:column;gap:16px}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+.btn{appearance:none;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:600 14px/1 var(--f-display);padding:11px 14px;border-radius:10px;cursor:pointer;min-height:44px;display:inline-flex;align-items:center;gap:6px;text-decoration:none}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-size:17px;padding:16px 26px}
+.btn.on{border-color:var(--accent);color:var(--accent)}
+.btn.danger{color:var(--warn);border-color:var(--warn)}
+.btn.sm{font-size:12.5px;padding:7px 10px;min-height:34px}
+.btn:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+h2{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0}
+.counts{display:flex;gap:6px;flex-wrap:wrap}
+.count{font-size:13px;background:var(--chip);border-radius:999px;padding:5px 10px;font-variant-numeric:tabular-nums}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px}
+.panel p{margin:0;font-size:13px;color:var(--muted)}
+.switch{display:flex;align-items:center;gap:10px;font-weight:600}
+.switch input{width:22px;height:22px;accent-color:var(--accent)}
+.nextbtn{display:flex;justify-content:space-between;align-items:center;gap:12px;background:var(--accent);color:var(--accent-ink);border-radius:12px;padding:14px 18px;text-decoration:none}
+.nextbtn .t{font-weight:800;font-stretch:112%;font-size:18px}
+.nextbtn .h{display:block;font:12px var(--f-mono);opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:60vw}
+.nextbtn[aria-disabled=true]{background:var(--chip);color:var(--muted);pointer-events:none}
+.search{width:100%;background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:11px 12px;font:14px var(--f-display)}
+ol{list-style:none;margin:0;padding:0;border-top:1px solid var(--line)}
+li{display:grid;grid-template-columns:44px 1fr;gap:8px;padding:10px 0;border-bottom:1px solid var(--line)}
+.n{font:12px var(--f-mono);color:var(--muted);text-align:right;padding-top:3px;font-variant-numeric:tabular-nums}
+.b{min-width:0;display:flex;flex-direction:column;gap:5px}
+.dom{font-weight:700;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.url{font:12px var(--f-mono);color:var(--muted);overflow-wrap:anywhere;word-break:break-all}
+.chip{font:700 10.5px/1 var(--f-display);text-transform:uppercase;letter-spacing:.06em;padding:4px 6px;border-radius:5px;background:var(--chip);color:var(--muted)}
+.chip.aberto,.chip.visitado{background:var(--accent-soft);color:var(--accent)}
+.chip.validado{background:var(--ok-bg);color:var(--ok)}
+.chip.warn{background:var(--warn-bg);color:var(--warn)}
+.acts{display:flex;gap:6px;flex-wrap:wrap}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(20px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:9px 14px;border-radius:999px;font-size:14px;z-index:9;max-width:calc(100% - 32px)}
+.more{text-align:center}
+[hidden]{display:none!important}
+@media (prefers-reduced-motion:reduce){.state.live::before{animation:none}.flash{transition:none}}
+</style>
+</head>
+<body>
+
+<section class="cam" id="cam">
+  <video id="video" playsinline muted></video>
+  <canvas id="overlay"></canvas>
+  <div class="flash" id="flash"></div>
+  <div class="hud">
+    <div class="big" id="bigCount">0<small>QR codes únicos</small></div>
+    <div class="state" id="camState">Desligada</div>
+  </div>
+  <div class="last" id="last" hidden></div>
+  <div class="start" id="start">
+    <h1>QR em <b>Lote</b></h1>
+    <p>Passe os QR codes na frente da câmera. Cada código entra uma vez só, e os links ficam salvos aqui para você validar depois.</p>
+    <p id="startMsg">Abrindo a câmera…</p>
+    <button class="btn primary" id="startBtn" type="button" hidden>Ligar câmera</button>
+    <p id="startErr" style="color:var(--warn)"></p>
+  </div>
+</section>
+
+<main class="wrap">
+  <div class="row" id="camCtl">
+    <button class="btn" id="pauseBtn" type="button" disabled>Pausar</button>
+    <button class="btn" id="torchBtn" type="button" hidden>Lanterna</button>
+    <button class="btn" id="flipBtn" type="button" hidden>Trocar câmera</button>
+  </div>
+
+  <div class="counts" id="counts"></div>
+
+  <a class="nextbtn" id="nextBtn" target="_blank" rel="noopener noreferrer" aria-disabled="true">
+    <span><span class="t" id="nextT">Abrir próximo</span><span class="h" id="nextH">Nenhum link na fila</span></span>
+    <span id="nextPos" style="font-weight:700;font-variant-numeric:tabular-nums"></span>
+  </a>
+
+  <div class="row">
+    <button class="btn sm" id="dlTxt" type="button">Baixar .txt</button>
+    <button class="btn sm" id="dlCsv" type="button">Baixar planilha .csv</button>
+    <button class="btn sm" id="copyPending" type="button">Copiar não validados</button>
+    <button class="btn sm" id="copyAll" type="button">Copiar todos</button>
+    <button class="btn sm danger" id="clearBtn" type="button">Apagar histórico</button>
+  </div>
+
+  <h2>Escaneados (mais recentes primeiro)</h2>
+  <input class="search" id="search" type="search" placeholder="Buscar por link ou domínio">
+  <ol id="list"></ol>
+  <div class="more"><button class="btn sm" id="moreBtn" type="button" hidden>Mostrar mais</button></div>
+</main>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const KEY = 'qrcam.v1';
+  /* items: {d: conteúdo, t: timestamp, s: novo|aberto|visitado|validado} */
+  let items = [];
+  const seen = new Set();
+  let lastOpened = null, shown = 100, filter = '';
+
+  /* ---------- armazenamento ---------- */
+  function load() {
+    try {
+      const s = JSON.parse(localStorage.getItem(KEY) || '{}');
+      if (Array.isArray(s.items)) items = s.items;
+    } catch (e) {}
+    items.forEach(it => seen.add(it.d));
+  }
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify({ items })); }
+    catch (e) { toast('Memória do navegador cheia. Baixe o .csv e apague o histórico.'); }
+  }
+
+  function parse(raw) {
+    let s = String(raw).trim();
+    if (/^www\./i.test(s)) s = 'https://' + s;
+    try {
+      const u = new URL(s);
+      if (u.protocol === 'http:' || u.protocol === 'https:')
+        return { url: true, href: u.href, host: u.hostname.replace(/^www\./, ''), secure: u.protocol === 'https:' };
+    } catch (e) {}
+    return { url: false };
+  }
+
+  let tt;
+  function toast(m) { const t = $('toast'); t.textContent = m; t.hidden = false; clearTimeout(tt); tt = setTimeout(() => t.hidden = true, 2400); }
+
+  /* ---------- novo código ---------- */
+  function addCode(data) {
+    data = String(data).trim();
+    if (!data || seen.has(data)) return false;
+    seen.add(data);
+    const it = { d: data, t: Date.now(), s: 'novo' };
+    items.push(it);
+    save();
+    const f = $('flash'); f.classList.add('on'); setTimeout(() => f.classList.remove('on'), 180);
+    const l = $('last'); l.hidden = false; l.textContent = '#' + items.length + '  ' + data;
+    if (!filter) prependItem(it, items.length);
+    updateHud();
+    return true;
+  }
+
+  /* ---------- câmera ---------- */
+  const video = $('video'), overlay = $('overlay');
+  let stream = null, running = false, paused = false, facing = 'environment', detector = null, torchOn = false;
+  const work = document.createElement('canvas');
+  const wctx = work.getContext('2d', { willReadFrequently: true });
+
+  const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const embedded = (() => { try { return window.top !== window.self; } catch (e) { return true; } })();
+  function permHelp() {
+    if (embedded || location.protocol !== 'https:')
+      return 'Aqui a câmera é bloqueada. Abra esta página pelo endereço https no ' + (isIOS ? 'Safari' : 'Chrome') + '.';
+    return isIOS
+      ? 'Para deixar sempre liberado: no Safari, toque em "aA" na barra de endereço → Ajustes do Site → Câmera → Permitir. Depois toque em Ligar câmera.'
+      : 'Para deixar sempre liberado: toque no cadeado ao lado do endereço → Permissões → Câmera → Permitir. Depois toque em Ligar câmera.';
+  }
+  async function startCam() {
+    if (embedded || location.protocol !== 'https:') {
+      $('startErr').textContent = permHelp(); $('startMsg').hidden = true; $('startBtn').hidden = false;
+      if (location.protocol !== 'https:' && location.hostname !== 'localhost') return;
+    }
+    $('startErr').textContent = '';
+    const fail = msg => { $('startErr').textContent = msg; $('startMsg').hidden = true; $('startBtn').hidden = false; };
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      fail('Este navegador não liberou a câmera. Abra a página por um endereço https (GitHub Pages) no Chrome ou Safari.');
+      return;
+    }
+    try {
+      if (stream) stream.getTracks().forEach(t => t.stop());
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { facingMode: { ideal: facing }, width: { ideal: 1920 }, height: { ideal: 1080 } }
+      });
+    } catch (e) {
+      fail(e.name === 'NotAllowedError' ? permHelp() : 'Não consegui abrir a câmera (' + e.name + ').');
+      return;
+    }
+    video.srcObject = stream;
+    await video.play().catch(() => {});
+    $('start').hidden = true;
+    running = true; paused = false;
+    $('pauseBtn').disabled = false; $('pauseBtn').textContent = 'Pausar';
+    const track = stream.getVideoTracks()[0];
+    const caps = track.getCapabilities ? track.getCapabilities() : {};
+    $('torchBtn').hidden = !caps.torch;
+    try { const cams = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput'); $('flipBtn').hidden = cams.length < 2; } catch (e) {}
+    if (!detector && 'BarcodeDetector' in window) {
+      try {
+        const f = await BarcodeDetector.getSupportedFormats();
+        if (f.includes('qr_code')) detector = new BarcodeDetector({ formats: ['qr_code'] });
+      } catch (e) {}
+    }
+    keepAwake();
+    setState();
+    loop();
+  }
+
+  function setState() {
+    const s = $('camState');
+    if (!running) { s.textContent = 'Desligada'; s.className = 'state'; }
+    else if (paused) { s.textContent = 'Pausada'; s.className = 'state'; }
+    else { s.textContent = detector ? 'Lendo' : 'Lendo (modo compatível)'; s.className = 'state live'; }
+  }
+
+  let wake = null;
+  async function keepAwake() { try { if ('wakeLock' in navigator) wake = await navigator.wakeLock.request('screen'); } catch (e) {} }
+
+  function drawBoxes(codes) {
+    const r = overlay.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    if (overlay.width !== Math.round(r.width * dpr)) { overlay.width = Math.round(r.width * dpr); overlay.height = Math.round(r.height * dpr); }
+    const ctx = overlay.getContext('2d');
+    ctx.clearRect(0, 0, overlay.width, overlay.height);
+    if (!codes.length) return;
+    const vw = video.videoWidth, vh = video.videoHeight;
+    const s = Math.max(overlay.width / vw, overlay.height / vh);
+    const ox = (overlay.width - vw * s) / 2, oy = (overlay.height - vh * s) / 2;
+    codes.forEach(c => {
+      ctx.lineWidth = 4 * dpr;
+      ctx.strokeStyle = c.fresh ? '#22e3a8' : 'rgba(255,255,255,.55)';
+      ctx.beginPath();
+      c.pts.forEach((p, k) => { const x = p.x * s + ox, y = p.y * s + oy; k ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+      ctx.closePath(); ctx.stroke();
+    });
+  }
+
+  function maskPoly(pts) {
+    let cx = 0, cy = 0; pts.forEach(p => { cx += p.x; cy += p.y; }); cx /= pts.length; cy /= pts.length;
+    wctx.fillStyle = '#fff'; wctx.beginPath();
+    pts.forEach((p, k) => { const x = cx + (p.x - cx) * 1.3, y = cy + (p.y - cy) * 1.3; k ? wctx.lineTo(x, y) : wctx.moveTo(x, y); });
+    wctx.closePath(); wctx.fill();
+  }
+
+  async function scanFrame() {
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw) return [];
+    const out = [];
+    if (detector) {
+      try {
+        const res = await detector.detect(video);
+        res.forEach(r => out.push({ data: r.rawValue, pts: r.cornerPoints }));
+        return out;
+      } catch (e) { detector = null; setState(); }
+    }
+    if (!window.jsQR) return out;
+    const sc = Math.min(1, 960 / Math.max(vw, vh));
+    const w = Math.round(vw * sc), h = Math.round(vh * sc);
+    work.width = w; work.height = h;
+    wctx.drawImage(video, 0, 0, w, h);
+    for (let i = 0; i < 4; i++) {
+      const q = jsQR(wctx.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: 'dontInvert' });
+      if (!q) break;
+      const L = q.location, lp = [L.topLeftCorner, L.topRightCorner, L.bottomRightCorner, L.bottomLeftCorner];
+      out.push({ data: q.data, pts: lp.map(p => ({ x: p.x / sc, y: p.y / sc })) });
+      maskPoly(lp);
+    }
+    return out;
+  }
+
+  let busy = false;
+  function loop() {
+    if (!running) return;
+    setTimeout(async () => {
+      if (!paused && !busy && !document.hidden) {
+        busy = true;
+        try {
+          const codes = await scanFrame();
+          codes.forEach(c => { c.fresh = addCode(c.data); });
+          drawBoxes(codes);
+        } catch (e) {}
+        busy = false;
+      }
+      loop();
+    }, detector ? 90 : 140);
+  }
+
+  $('startBtn').addEventListener('click', startCam);
+  $('pauseBtn').addEventListener('click', () => {
+    paused = !paused; $('pauseBtn').textContent = paused ? 'Continuar' : 'Pausar';
+    if (paused) drawBoxes([]);
+    setState();
+  });
+  $('torchBtn').addEventListener('click', async () => {
+    try {
+      torchOn = !torchOn;
+      await stream.getVideoTracks()[0].applyConstraints({ advanced: [{ torch: torchOn }] });
+      $('torchBtn').classList.toggle('on', torchOn);
+    } catch (e) { toast('Lanterna indisponível nesta câmera.'); }
+  });
+  $('flipBtn').addEventListener('click', () => { facing = facing === 'environment' ? 'user' : 'environment'; startCam(); });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+      renderAll();
+      if (running) { keepAwake(); if (!stream || !stream.active) startCam(); }
+    }
+  });
+
+  /* ---------- lista ---------- */
+  function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  const label = { novo: 'Na fila', aberto: 'Aberto', visitado: 'Visitado', validado: 'Validado' };
+
+  function itemNode(it, n) {
+    const p = parse(it.d);
+    const li = el('li'); li.dataset.t = it.t;
+    li.append(el('div', 'n', '#' + n));
+    const b = el('div', 'b');
+    const dom = el('div', 'dom', p.url ? p.host : 'Texto');
+    dom.append(el('span', 'chip ' + it.s, label[it.s]));
+    if (p.url && !p.secure) dom.append(el('span', 'chip warn', 'Sem HTTPS'));
+    b.append(dom, el('div', 'url', it.d));
+    const acts = el('div', 'acts');
+    if (p.url) {
+      const a = el('a', 'btn sm', 'Abrir'); a.href = p.href; a.target = '_blank'; a.rel = 'noopener noreferrer';
+      a.dataset.act = 'open'; acts.append(a);
+    }
+    const c = el('button', 'btn sm', 'Copiar'); c.type = 'button'; c.dataset.act = 'copy';
+    const v = el('button', 'btn sm' + (it.s === 'validado' ? ' on' : ''), it.s === 'validado' ? '✓ Validado' : 'Marcar validado'); v.type = 'button'; v.dataset.act = 'val';
+    acts.append(c, v); b.append(acts); li.append(b);
+    return li;
+  }
+  function byT(t) { return items.find(x => String(x.t) === String(t)); }
+  function prependItem(it, n) { const list = $('list'); list.prepend(itemNode(it, n)); }
+  function refreshItem(it) {
+    const li = $('list').querySelector(`li[data-t="${it.t}"]`);
+    if (li) li.replaceWith(itemNode(it, items.indexOf(it) + 1));
+  }
+  function renderAll() {
+    const list = $('list'); list.replaceChildren();
+    const q = filter.toLowerCase();
+    const pool = [];
+    for (let i = items.length - 1; i >= 0; i--) if (!q || items[i].d.toLowerCase().includes(q)) pool.push(i);
+    pool.slice(0, shown).forEach(i => list.append(itemNode(items[i], i + 1)));
+    $('moreBtn').hidden = pool.length <= shown;
+    $('moreBtn').textContent = `Mostrar mais (${pool.length - shown} restantes)`;
+    updateHud();
+  }
+  function updateHud() {
+    $('bigCount').firstChild.nodeValue = String(items.length);
+    const c = s => items.filter(x => x.s === s).length;
+    const box = $('counts'); box.replaceChildren();
+    [['na fila', c('novo')], ['abertos', c('aberto')], ['validados', c('validado')]].forEach(([l, v]) => {
+      const s = el('span', 'count'); s.append(el('b', null, String(v)), document.createTextNode(' ' + l)); box.append(s);
+    });
+    const urls = items.filter(x => parse(x.d).url);
+    const next = urls.find(x => x.s === 'novo');
+    const nb = $('nextBtn');
+    if (next) {
+      const p = parse(next.d);
+      nb.href = p.href; nb.setAttribute('aria-disabled', 'false'); nb.dataset.t = next.t;
+      $('nextT').textContent = 'Abrir próximo'; $('nextH').textContent = p.host;
+      $('nextPos').textContent = `${urls.indexOf(next) + 1} de ${urls.length}`;
+    } else {
+      nb.removeAttribute('href'); nb.setAttribute('aria-disabled', 'true');
+      $('nextT').textContent = urls.length ? 'Todos abertos' : 'Abrir próximo';
+      $('nextH').textContent = urls.length ? `${c('validado')} de ${urls.length} validados` : 'Nenhum link na fila';
+      $('nextPos').textContent = '';
+    }
+  }
+  function markOpened(it) { if (it.s === 'novo') it.s = 'aberto'; lastOpened = it; save(); setTimeout(() => { refreshItem(it); updateHud(); }, 60); }
+
+  $('list').addEventListener('click', e => {
+    const btn = e.target.closest('[data-act]'); if (!btn) return;
+    const it = byT(btn.closest('li').dataset.t); if (!it) return;
+    if (btn.dataset.act === 'open') markOpened(it);
+    if (btn.dataset.act === 'copy') copyText(it.d, 'Copiado');
+    if (btn.dataset.act === 'val') { it.s = it.s === 'validado' ? 'aberto' : 'validado'; save(); refreshItem(it); updateHud(); }
+  });
+  $('nextBtn').addEventListener('click', e => { const it = byT(e.currentTarget.dataset.t); if (it) markOpened(it); });
+  $('search').addEventListener('input', e => { filter = e.target.value.trim(); shown = 100; renderAll(); });
+  $('moreBtn').addEventListener('click', () => { shown += 200; renderAll(); });
+
+  /* ---------- exportar ---------- */
+  async function copyText(t, msg) {
+    try { await navigator.clipboard.writeText(t); toast(msg); } catch (e) { toast('Não consegui copiar. Use Baixar .txt.'); }
+  }
+  function download(name, text, type) {
+    const blob = new Blob([text], { type });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  }
+  const stamp = () => new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+  $('dlTxt').addEventListener('click', () => download(`qrcodes-${stamp()}.txt`, items.map(x => x.d).join('\n'), 'text/plain'));
+  $('dlCsv').addEventListener('click', () => {
+    const esc = s => '"' + String(s).replace(/"/g, '""') + '"';
+    const rows = [['numero', 'conteudo', 'dominio', 'status', 'escaneado_em'].join(';')];
+    items.forEach((x, i) => rows.push([i + 1, esc(x.d), esc(parse(x.d).host || ''), label[x.s], esc(new Date(x.t).toLocaleString('pt-BR'))].join(';')));
+    download(`qrcodes-${stamp()}.csv`, '﻿' + rows.join('\n'), 'text/csv');
+  });
+  $('copyPending').addEventListener('click', () => {
+    const p = items.filter(x => x.s !== 'validado').map(x => x.d);
+    copyText(p.join('\n'), `${p.length} copiados`);
+  });
+  $('copyAll').addEventListener('click', () => copyText(items.map(x => x.d).join('\n'), `${items.length} copiados`));
+  let armed = null;
+  $('clearBtn').addEventListener('click', e => {
+    const b = e.currentTarget;
+    if (!armed) { b.textContent = 'Toque de novo: apaga tudo e esquece os repetidos'; armed = setTimeout(() => { armed = null; b.textContent = 'Apagar histórico'; }, 3500); return; }
+    clearTimeout(armed); armed = null; b.textContent = 'Apagar histórico';
+    items = []; seen.clear(); save(); renderAll(); $('last').hidden = true; toast('Histórico apagado');
+  });
+
+  /* ---------- início ---------- */
+  load();
+  renderAll();
+  startCam();
+})();
+</script>
+</body>
+</html>
