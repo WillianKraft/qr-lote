@@ -487,6 +487,7 @@ li{display:grid;grid-template-columns:44px 1fr;gap:8px;padding:10px 0;border-bot
         else if (m.type === 'fail') { slot.dead = true; setState(); }
         else if (m.type === 'done') {
           const job = slot.job; slot.busy = false; slot.job = null;
+          scanCount++;
           if (job) handleCodes(m.codes.map(c => ({ data: c.data, pts: c.pts.map(p => ({ x: p.x / job.s + job.r.x, y: p.y / job.s + job.r.y })) })));
         }
       };
@@ -496,35 +497,39 @@ li{display:grid;grid-template-columns:44px 1fr;gap:8px;padding:10px 0;border-bot
     }
   }
   const liveWorkers = () => pool.filter(p => p.ready && !p.dead);
+  /* leituras por segundo, mostradas no selo para saber se está rápido no aparelho */
+  let scanCount = 0, scanRate = 0;
+  setInterval(() => { scanRate = scanCount; scanCount = 0; if (running && !paused) setState(); }, 1000);
   engineName = () => {
     const n = liveWorkers().length;
-    return n ? poolEngine + ' ×' + n : (detector ? engine : 'básico');
+    return (n ? poolEngine + ' ×' + n : (detector ? engine : 'básico')) + (n && scanRate ? ' · ' + scanRate + '/s' : '');
   };
 
-  let poolTile = 0;
-  function nextPoolJob(first) {
+  let poolTile = 0, poolTurn = 0;
+  function nextPoolJob(full) {
     const r = viewRect();
-    /* a cada quadro: o primeiro trabalhador livre lê o quadro inteiro (rápido), os outros leem pedaços em resolução cheia */
-    if (first) return { r, max: 1024 };
+    if (full) return { r, max: 1024 };
     const tiles = tilesOf(r, 2);
     if (Math.max(r.w, r.h) > 2400) tiles.push(...tilesOf(r, 3));
-    return { r: tiles[poolTile++ % tiles.length], max: 1920 };
+    return { r: tiles[poolTile++ % tiles.length], max: 1280 };
   }
+  /* Uma cópia leve por quadro, para a câmera não engasgar: alterna quadro inteiro (códigos que acabaram de aparecer)
+     e um pedaço em alta (códigos pequenos ou longe), entregue ao próximo trabalhador livre. */
   function dispatch() {
     const now = performance.now();
-    let first = true;
-    for (const slot of liveWorkers()) {
-      if (slot.busy && now - slot.since > 3000) slot.busy = false; /* trabalhador travado: libera */
-      if (slot.busy) continue;
-      const job = nextPoolJob(first); first = false;
-      const sc = Math.min(1, job.max / Math.max(job.r.w, job.r.h));
-      const w = Math.max(1, Math.round(job.r.w * sc)), h = Math.max(1, Math.round(job.r.h * sc));
-      if (cap.width !== w || cap.height !== h) { cap.width = w; cap.height = h; }
-      cctx.drawImage(video, job.r.x, job.r.y, job.r.w, job.r.h, 0, 0, w, h);
-      const img = cctx.getImageData(0, 0, w, h);
-      slot.busy = true; slot.since = now; slot.job = { r: job.r, s: sc };
-      slot.w.postMessage({ type: 'scan', buf: img.data.buffer, w, h }, [img.data.buffer]);
-    }
+    const slot = liveWorkers().find(s => {
+      if (s.busy && now - s.since > 1500) s.busy = false; /* trabalhador travado: libera */
+      return !s.busy;
+    });
+    if (!slot) return;
+    const job = nextPoolJob(poolTurn++ % 2 === 0);
+    const sc = Math.min(1, job.max / Math.max(job.r.w, job.r.h));
+    const w = Math.max(1, Math.round(job.r.w * sc)), h = Math.max(1, Math.round(job.r.h * sc));
+    if (cap.width !== w || cap.height !== h) { cap.width = w; cap.height = h; }
+    cctx.drawImage(video, job.r.x, job.r.y, job.r.w, job.r.h, 0, 0, w, h);
+    const img = cctx.getImageData(0, 0, w, h);
+    slot.busy = true; slot.since = now; slot.job = { r: job.r, s: sc };
+    slot.w.postMessage({ type: 'scan', buf: img.data.buffer, w, h }, [img.data.buffer]);
   }
 
   let busy = false, loopGen = 0;
